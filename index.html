@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mis videos de YouTube</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#1d1f23;--mut:#6b7280;--ac:#d92d20;--bd:#e5e7eb}
+@media(prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1f2228;--tx:#eceef2;--mut:#9aa1ad;--bd:#31353d}}
+*{box-sizing:border-box}
+body{margin:0;font:15px system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--tx)}
+header{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:5}
+header h1{font-size:18px;margin:0 12px 0 0}
+input,textarea,button{font:inherit;color:inherit}
+input,textarea{padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)}
+button{padding:8px 14px;border:0;border-radius:8px;background:var(--ac);color:#fff;cursor:pointer}
+button.sec{background:var(--bd);color:var(--tx)}
+button.sm{padding:3px 8px;font-size:12px}
+#url{flex:2;min-width:220px}#ttl{flex:1;min-width:140px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;cursor:pointer;position:relative}
+.card img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#000}
+.card .t{padding:10px 12px;font-weight:600}
+.card .n{padding:0 12px 10px;color:var(--mut);font-size:12px}
+.card .x{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.65);padding:2px 8px}
+.empty{padding:40px;text-align:center;color:var(--mut);grid-column:1/-1}
+#view{display:none;padding:16px;gap:16px}
+#view.on{display:flex;flex-wrap:wrap}
+#main{flex:3;min-width:300px}
+#side{flex:1;min-width:260px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;align-self:flex-start;max-height:80vh;overflow:auto}
+.vw{position:relative;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
+.vw>div,.vw iframe{position:absolute;inset:0;width:100%;height:100%}
+#vt{margin:12px 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#vt h2{flex:1;margin:0;font-size:18px}
+#form{display:none;margin-top:12px;padding:12px;background:var(--card);border:1px solid var(--bd);border-radius:12px}
+#form.on{display:block}
+#form input,#form textarea{width:100%;margin:6px 0}
+#detail{margin-top:12px;padding:12px;background:var(--card);border:1px solid var(--bd);border-radius:12px;display:none;white-space:pre-wrap}
+#detail.on{display:block}
+.it{padding:8px;border-radius:8px;cursor:pointer;display:flex;gap:8px;align-items:center}
+.it:hover,.it.sel{background:var(--bg)}
+.it .tm{color:var(--ac);font-variant-numeric:tabular-nums;font-weight:600}
+.it .tt{flex:1}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<header id="top">
+  <h1>▶ Mis videos</h1>
+  <input id="url" placeholder="Pegá la URL del video de YouTube">
+  <input id="ttl" placeholder="Título (opcional)">
+  <button id="add">Agregar</button>
+  <button class="sec" id="exp">Exportar</button>
+  <button class="sec" id="imp">Importar</button>
+  <input type="file" id="file" accept=".json" hidden>
+</header>
+
+<div id="grid"></div>
+
+<div id="view">
+  <div id="main">
+    <div id="vt"><button class="sec" id="back">← Volver</button><h2 id="vtitle"></h2><button id="note">✎ Apunte</button></div>
+    <div class="vw"><div id="player"></div></div>
+    <div id="form">
+      <div>Apunte en <b id="ftime"></b></div>
+      <input id="ntitle" placeholder="Título del apunte (aparece en el índice)">
+      <textarea id="ntext" rows="4" placeholder="Escribí tu apunte..."></textarea>
+      <button id="save">Guardar</button> <button class="sec" id="cancel">Cancelar</button>
+    </div>
+    <div id="detail"><div id="dhead" style="margin-bottom:6px"></div><div id="dbody"></div></div>
+  </div>
+  <aside id="side"><b>Índice de apuntes</b><div id="idx"></div></aside>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let vids=[],cur=null,player=null,apiReady=false,pendingId=null,editing=null,selNote=null;
+try{vids=JSON.parse(localStorage.getItem('vids')||'[]')}catch(e){}
+const save=()=>{try{localStorage.setItem('vids',JSON.stringify(vids))}catch(e){}};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=s=>{s=Math.floor(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),r=s%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(r).padStart(2,'0')};
+
+function parseId(u){
+  u=u.trim();
+  if(/^[\w-]{11}$/.test(u))return u;
+  const m=u.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([\w-]{11})/);
+  return m?m[1]:null;
+}
+
+/* ---------- Grilla ---------- */
+function renderGrid(){
+  const g=$('grid');
+  if(!vids.length){g.innerHTML='<div class="empty">Todavía no hay videos. Pegá una URL de YouTube arriba y tocá "Agregar".</div>';return}
+  g.innerHTML=vids.map(v=>`<div class="card" data-id="${v.uid}">
+    <img src="https://img.youtube.com/vi/${v.id}/hqdefault.jpg" alt="">
+    <button class="x sm" data-del="${v.uid}">✕</button>
+    <div class="t">${esc(v.title)}</div>
+    <div class="n">${v.notes.length} apunte${v.notes.length===1?'':'s'}</div></div>`).join('');
+}
+$('grid').onclick=e=>{
+  const d=e.target.closest('[data-del]');
+  if(d){if(confirm('¿Quitar este video y sus apuntes?')){vids=vids.filter(v=>v.uid!==d.dataset.del);save();renderGrid()}return}
+  const c=e.target.closest('.card');if(c)openVideo(c.dataset.id);
+};
+$('add').onclick=async()=>{
+  const id=parseId($('url').value);
+  if(!id){alert('No pude reconocer esa URL de YouTube.');return}
+  let title=$('ttl').value.trim();
+  if(!title){
+    try{const r=await fetch('https://www.youtube.com/oembed?format=json&url='+encodeURIComponent('https://www.youtube.com/watch?v='+id));title=(await r.json()).title}catch(e){}
+  }
+  vids.push({uid:uid(),id,title:title||'Video '+id,notes:[]});
+  save();renderGrid();$('url').value='';$('ttl').value='';
+};
+$('url').onkeydown=e=>{if(e.key==='Enter')$('add').click()};
+
+/* ---------- Reproductor ---------- */
+const tag=document.createElement('script');tag.src='https://www.youtube.com/iframe_api';document.head.appendChild(tag);
+window.onYouTubeIframeAPIReady=()=>{apiReady=true;if(pendingId)startPlayer(pendingId)};
+function startPlayer(id,t){
+  if(player&&player.loadVideoById){player.loadVideoById({videoId:id,startSeconds:t||0});return}
+  player=new YT.Player('player',{videoId:id,playerVars:{rel:0,playsinline:1,start:t||0},width:'100%',height:'100%'});
+}
+function openVideo(u){
+  cur=vids.find(v=>v.uid===u);selNote=null;
+  $('grid').style.display='none';$('top').style.display='none';
+  $('view').classList.add('on');$('vtitle').textContent=cur.title;
+  $('form').classList.remove('on');$('detail').classList.remove('on');
+  renderIdx();
+  if(apiReady)startPlayer(cur.id);else pendingId=cur.id;
+  window.scrollTo(0,0);
+}
+$('back').onclick=()=>{
+  if(player&&player.pauseVideo)player.pauseVideo();
+  $('view').classList.remove('on');$('grid').style.display='';$('top').style.display='';
+  cur=null;renderGrid();
+};
+
+/* ---------- Apuntes ---------- */
+const now=()=>player&&player.getCurrentTime?player.getCurrentTime():0;
+$('note').onclick=()=>{
+  editing={t:Math.floor(now())};
+  if(player&&player.pauseVideo)player.pauseVideo();
+  $('ftime').textContent=fmt(editing.t);$('ntitle').value='';$('ntext').value='';
+  $('form').classList.add('on');$('ntitle').focus();
+};
+$('cancel').onclick=()=>{editing=null;$('form').classList.remove('on')};
+$('save').onclick=()=>{
+  const title=$('ntitle').value.trim()||$('ntext').value.trim().slice(0,40);
+  if(!title){alert('Escribí un título o un apunte.');return}
+  if(editing.uid){const n=cur.notes.find(x=>x.uid===editing.uid);n.title=title;n.text=$('ntext').value}
+  else{const n={uid:uid(),t:editing.t,title,text:$('ntext').value};cur.notes.push(n);selNote=n.uid}
+  save();editing=null;$('form').classList.remove('on');renderIdx();showNote(selNote,false);
+};
+function renderIdx(){
+  const l=[...cur.notes].sort((a,b)=>a.t-b.t);
+  $('idx').innerHTML=l.length?l.map(n=>`<div class="it ${n.uid===selNote?'sel':''}" data-n="${n.uid}">
+    <span class="tm">${fmt(n.t)}</span><span class="tt">${esc(n.title)}</span>
+    <button class="sec sm" data-e="${n.uid}">✎</button><button class="sec sm" data-d="${n.uid}">✕</button></div>`).join('')
+    :'<div class="mut" style="padding:8px">Sin apuntes. Tocá "✎ Apunte" mientras mirás el video.</div>';
+}
+function showNote(u,seek=true){
+  const n=cur.notes.find(x=>x.uid===u);if(!n)return;
+  selNote=u;renderIdx();
+  $('dhead').innerHTML=`<b>${esc(n.title)}</b> <span class="mut">· ${fmt(n.t)}</span>`;
+  $('dbody').textContent=n.text||'(sin texto)';$('detail').classList.add('on');
+  if(seek&&player&&player.seekTo){player.seekTo(n.t,true);player.playVideo()}
+}
+$('idx').onclick=e=>{
+  const ed=e.target.closest('[data-e]'),de=e.target.closest('[data-d]'),it=e.target.closest('[data-n]');
+  if(de){if(confirm('¿Borrar apunte?')){cur.notes=cur.notes.filter(n=>n.uid!==de.dataset.d);save();$('detail').classList.remove('on');selNote=null;renderIdx()}return}
+  if(ed){const n=cur.notes.find(x=>x.uid===ed.dataset.e);editing={t:n.t,uid:n.uid};$('ftime').textContent=fmt(n.t);$('ntitle').value=n.title;$('ntext').value=n.text;$('form').classList.add('on');return}
+  if(it)showNote(it.dataset.n);
+};
+
+/* ---------- Respaldo ---------- */
+$('exp').onclick=()=>{
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(vids,null,1)],{type:'application/json'}));
+  a.download='videos-youtube.json';a.click();
+};
+$('imp').onclick=()=>$('file').click();
+$('file').onchange=async e=>{
+  try{const d=JSON.parse(await e.target.files[0].text());if(Array.isArray(d)&&confirm('¿Reemplazar la lista actual?')){vids=d;save();renderGrid()}}
+  catch(err){alert('Archivo inválido')}
+  e.target.value='';
+};
+renderGrid();
+</script>
+</body>
+</html>
